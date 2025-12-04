@@ -55,7 +55,7 @@ void            interactive_pattern_input(pattern_config& pconfig);
 void            vanity_setup(config& vanity);
 void            vanity_run(config& vanity, pattern_config& pconfig);
 void __global__ vanity_init(unsigned long long int* seed, curandState* state);
-void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* execution_count,
+void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, unsigned long long int* execution_count,
                            char** prefixes, int* prefix_lengths, int prefix_count,
                            char** suffixes, int* suffix_lengths, int suffix_count,
                            char** combined_prefixes, int* combined_prefix_lengths,
