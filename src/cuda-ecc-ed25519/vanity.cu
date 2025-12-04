@@ -352,8 +352,9 @@ void vanity_setup(config &vanity) {
 			printf("WARNING: Auto blockSize=%d too small, forcing 256\n", blockSize);
 			blockSize = 256;
 		}
-		// Use same 8 blocks per SM that works well on RTX 5070 Ti
-		int blocksPerSM = 8;
+		// H200/H100 can handle more blocks per SM than other GPUs
+		// RTX 5070 Ti works well with 8, so H200 should handle 16-20
+		int blocksPerSM = (device.major == 9 && device.minor == 0) ? 16 : 8;
 		int minBlocksNeeded = device.multiProcessorCount * blocksPerSM;
 		if (minGridSize < minBlocksNeeded) {
 			printf("WARNING: Auto minGridSize=%d too small, forcing %d\n", minGridSize, minBlocksNeeded);
@@ -546,8 +547,9 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
 			if (blockSize < 256) {
 				blockSize = 256;
 			}
-			// Use same 8 blocks per SM that works well on RTX 5070 Ti
-			int blocksPerSM = 8;
+			// H200/H100 can handle more blocks per SM than other GPUs
+			// RTX 5070 Ti works well with 8, so H200 should handle 16-20
+			int blocksPerSM = (device.major == 9 && device.minor == 0) ? 16 : 8;
 			int minBlocksNeeded = device.multiProcessorCount * blocksPerSM;
 			if (minGridSize < minBlocksNeeded) {
 				minGridSize = minBlocksNeeded;
