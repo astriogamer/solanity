@@ -20,10 +20,13 @@ if [ -f "vanity-config.json" ]; then
     echo
 fi
 
-# Run the vanity generator
+# Run the vanity generator with proper library path
 cd src/release
 echo "Starting vanity address generator..."
 echo
+
+# Set LD_LIBRARY_PATH to find libcuda-crypt.so in current directory
+export LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH
 ./cuda_ed25519_vanity
 
 echo

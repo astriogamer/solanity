@@ -82,10 +82,19 @@ make V=debug
 
 After building:
 
+**Linux/Mac:**
 ```bash
 cd src/release
-./cuda_ed25519_vanity
+LD_LIBRARY_PATH=. ./cuda_ed25519_vanity
 ```
+
+**Windows:**
+```cmd
+cd src\release
+cuda_ed25519_vanity.exe
+```
+
+**Important for Linux/Mac**: The `LD_LIBRARY_PATH=.` tells the system to look for `libcuda-crypt.so` in the current directory. Without this, you'll get a "shared library not found" error.
 
 Make sure `vanity-config.json` is in the same directory as the executable, or it will use defaults.
 
@@ -125,6 +134,11 @@ See [VANITY_USAGE.md](VANITY_USAGE.md) for detailed configuration options.
 ### Executable not found after build
 - Build may have failed silently
 - **Fix**: Check `src/release/` directory, look for error messages in build output
+
+### "error while loading shared libraries: libcuda-crypt.so" (Linux/Mac)
+- The executable can't find the shared library
+- **Fix**: Use the run script (`./run-vanity.sh`) which sets `LD_LIBRARY_PATH` automatically
+- **Manual fix**: Run with `LD_LIBRARY_PATH=. ./cuda_ed25519_vanity` from the `src/release` directory
 
 ## Performance Tips
 

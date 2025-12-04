@@ -9,11 +9,10 @@ static int const STOP_AFTER_KEYS_FOUND = 100;
 // Optimized for ~30 second iterations
 static int const ATTEMPTS_PER_EXECUTION = 10000;
 
-__device__ const int MAX_PATTERNS = 10;
-
 // Default prefixes (exact matches at the beginning of the address)
 // Letter '?' is wildcard - used only if vanity-config.json is not found
-__device__ static char const *prefixes[] = {
+// Note: These are HOST-side defaults, used only for fallback when JSON doesn't exist
+static char const *prefixes[] = {
 	"meteor",
 };
 
