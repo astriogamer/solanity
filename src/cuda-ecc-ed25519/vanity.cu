@@ -60,7 +60,7 @@ void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* 
                            char** suffixes, int* suffix_lengths, int suffix_count,
                            char** combined_prefixes, int* combined_prefix_lengths,
                            char** combined_suffixes, int* combined_suffix_lengths,
-                           int combined_count);
+                           int combined_count, int attempts_per_exec);
 bool __device__ b58enc(char* b58, size_t* b58sz, uint8_t* data, size_t binsz);
 
 /* -- Entry Point ----------------------------------------------------------- */
