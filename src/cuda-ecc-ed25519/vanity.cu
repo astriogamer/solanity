@@ -35,8 +35,14 @@ typedef struct {
 } config;
 
 typedef struct {
+	std::string prefix;
+	std::string suffix;
+} combined_pattern;
+
+typedef struct {
 	std::vector<std::string> prefixes;
 	std::vector<std::string> suffixes;
+	std::vector<combined_pattern> combined;
 	int max_iterations;
 	int stop_after_keys_found;
 	int attempts_per_execution;
@@ -51,7 +57,10 @@ void            vanity_run(config& vanity, pattern_config& pconfig);
 void __global__ vanity_init(unsigned long long int* seed, curandState* state);
 void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* execution_count,
                            char** prefixes, int* prefix_lengths, int prefix_count,
-                           char** suffixes, int* suffix_lengths, int suffix_count);
+                           char** suffixes, int* suffix_lengths, int suffix_count,
+                           char** combined_prefixes, int* combined_prefix_lengths,
+                           char** combined_suffixes, int* combined_suffix_lengths,
+                           int combined_count);
 bool __device__ b58enc(char* b58, size_t* b58sz, uint8_t* data, size_t binsz);
 
 /* -- Entry Point ----------------------------------------------------------- */
@@ -71,6 +80,8 @@ int main(int argc, char const* argv[]) {
 	for (const auto& p : pconfig.prefixes) std::cout << p << " ";
 	std::cout << "\n  Suffixes: ";
 	for (const auto& s : pconfig.suffixes) std::cout << s << " ";
+	std::cout << "\n  Combined (prefix+suffix): ";
+	for (const auto& c : pconfig.combined) std::cout << "[" << c.prefix << "..." << c.suffix << "] ";
 	std::cout << "\n\nModify patterns? (y/n): ";
 
 	char response;
@@ -202,6 +213,56 @@ pattern_config load_pattern_config() {
 						pconfig.suffixes.push_back(pattern);
 					}
 					quote_pos = end_quote + 1;
+				} else {
+					break;
+				}
+			}
+		}
+	}
+
+	// Parse combined array
+	pos = content.find("\"combined\"");
+	if (pos != std::string::npos) {
+		size_t bracket_start = content.find("[", pos);
+		size_t bracket_end = content.find("]", bracket_start);
+		if (bracket_start != std::string::npos && bracket_end != std::string::npos) {
+			std::string array_content = content.substr(bracket_start + 1, bracket_end - bracket_start - 1);
+			size_t obj_pos = 0;
+			while ((obj_pos = array_content.find("{", obj_pos)) != std::string::npos) {
+				size_t obj_end = array_content.find("}", obj_pos);
+				if (obj_end != std::string::npos) {
+					std::string obj_content = array_content.substr(obj_pos + 1, obj_end - obj_pos - 1);
+
+					// Extract prefix
+					size_t prefix_pos = obj_content.find("\"prefix\"");
+					std::string prefix_str;
+					if (prefix_pos != std::string::npos) {
+						size_t quote1 = obj_content.find("\"", prefix_pos + 8);
+						size_t quote2 = obj_content.find("\"", quote1 + 1);
+						if (quote1 != std::string::npos && quote2 != std::string::npos) {
+							prefix_str = obj_content.substr(quote1 + 1, quote2 - quote1 - 1);
+						}
+					}
+
+					// Extract suffix
+					size_t suffix_pos = obj_content.find("\"suffix\"");
+					std::string suffix_str;
+					if (suffix_pos != std::string::npos) {
+						size_t quote1 = obj_content.find("\"", suffix_pos + 8);
+						size_t quote2 = obj_content.find("\"", quote1 + 1);
+						if (quote1 != std::string::npos && quote2 != std::string::npos) {
+							suffix_str = obj_content.substr(quote1 + 1, quote2 - quote1 - 1);
+						}
+					}
+
+					if (!prefix_str.empty() && !suffix_str.empty()) {
+						combined_pattern cp;
+						cp.prefix = prefix_str;
+						cp.suffix = suffix_str;
+						pconfig.combined.push_back(cp);
+					}
+
+					obj_pos = obj_end + 1;
 				} else {
 					break;
 				}
@@ -356,11 +417,22 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
 	int* dev_prefix_lengths[100];
 	char** dev_suffixes[100];
 	int* dev_suffix_lengths[100];
+	char** dev_combined_prefixes[100];
+	int* dev_combined_prefix_lengths[100];
+	char** dev_combined_suffixes[100];
+	int* dev_combined_suffix_lengths[100];
 
 	std::vector<int> prefix_lengths;
 	std::vector<int> suffix_lengths;
+	std::vector<int> combined_prefix_lengths;
+	std::vector<int> combined_suffix_lengths;
+
 	for (const auto& p : pconfig.prefixes) prefix_lengths.push_back(p.length());
 	for (const auto& s : pconfig.suffixes) suffix_lengths.push_back(s.length());
+	for (const auto& c : pconfig.combined) {
+		combined_prefix_lengths.push_back(c.prefix.length());
+		combined_suffix_lengths.push_back(c.suffix.length());
+	}
 
 	// Copy patterns to device for each GPU
 	for (int g = 0; g < gpuCount; ++g) {
@@ -401,6 +473,40 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
 			cudaMemcpy(dev_suffix_lengths[g], suffix_lengths.data(),
 			          suffix_lengths.size() * sizeof(int), cudaMemcpyHostToDevice);
 		}
+
+		// Allocate combined pattern arrays
+		if (!pconfig.combined.empty()) {
+			char** h_combined_prefixes = new char*[pconfig.combined.size()];
+			char** h_combined_suffixes = new char*[pconfig.combined.size()];
+			for (size_t i = 0; i < pconfig.combined.size(); ++i) {
+				cudaMalloc(&h_combined_prefixes[i], pconfig.combined[i].prefix.length() + 1);
+				cudaMemcpy(h_combined_prefixes[i], pconfig.combined[i].prefix.c_str(),
+				          pconfig.combined[i].prefix.length() + 1, cudaMemcpyHostToDevice);
+
+				cudaMalloc(&h_combined_suffixes[i], pconfig.combined[i].suffix.length() + 1);
+				cudaMemcpy(h_combined_suffixes[i], pconfig.combined[i].suffix.c_str(),
+				          pconfig.combined[i].suffix.length() + 1, cudaMemcpyHostToDevice);
+			}
+
+			cudaMalloc(&dev_combined_prefixes[g], pconfig.combined.size() * sizeof(char*));
+			cudaMemcpy(dev_combined_prefixes[g], h_combined_prefixes,
+			          pconfig.combined.size() * sizeof(char*), cudaMemcpyHostToDevice);
+
+			cudaMalloc(&dev_combined_suffixes[g], pconfig.combined.size() * sizeof(char*));
+			cudaMemcpy(dev_combined_suffixes[g], h_combined_suffixes,
+			          pconfig.combined.size() * sizeof(char*), cudaMemcpyHostToDevice);
+
+			delete[] h_combined_prefixes;
+			delete[] h_combined_suffixes;
+
+			cudaMalloc(&dev_combined_prefix_lengths[g], combined_prefix_lengths.size() * sizeof(int));
+			cudaMemcpy(dev_combined_prefix_lengths[g], combined_prefix_lengths.data(),
+			          combined_prefix_lengths.size() * sizeof(int), cudaMemcpyHostToDevice);
+
+			cudaMalloc(&dev_combined_suffix_lengths[g], combined_suffix_lengths.size() * sizeof(int));
+			cudaMemcpy(dev_combined_suffix_lengths[g], combined_suffix_lengths.data(),
+			          combined_suffix_lengths.size() * sizeof(int), cudaMemcpyHostToDevice);
+		}
 	}
 
 	unsigned long long int  executions_total = 0;
@@ -412,8 +518,8 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
         int  keys_found_this_iteration;
         int* dev_keys_found[100]; // not more than 100 GPUs ok!
 
-	printf("Starting iteration loop with %zu prefixes and %zu suffixes...\n",
-	       pconfig.prefixes.size(), pconfig.suffixes.size());
+	printf("Starting iteration loop with %zu prefixes, %zu suffixes, and %zu combined patterns...\n",
+	       pconfig.prefixes.size(), pconfig.suffixes.size(), pconfig.combined.size());
 	for (int i = 0; i < pconfig.max_iterations; ++i) {
 		printf("Iteration %d starting...\n", i+1);
 		auto start  = std::chrono::high_resolution_clock::now();
@@ -461,7 +567,12 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
 				pconfig.prefixes.size(),
 				pconfig.suffixes.empty() ? nullptr : dev_suffixes[g],
 				pconfig.suffixes.empty() ? nullptr : dev_suffix_lengths[g],
-				pconfig.suffixes.size()
+				pconfig.suffixes.size(),
+				pconfig.combined.empty() ? nullptr : dev_combined_prefixes[g],
+				pconfig.combined.empty() ? nullptr : dev_combined_prefix_lengths[g],
+				pconfig.combined.empty() ? nullptr : dev_combined_suffixes[g],
+				pconfig.combined.empty() ? nullptr : dev_combined_suffix_lengths[g],
+				pconfig.combined.size()
 			);
 			printf("Kernel launched for GPU %d, now waiting for sync...\n", g);
 
@@ -522,7 +633,10 @@ void __global__ vanity_init(unsigned long long int* rseed, curandState* state) {
 
 void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* exec_count,
                            char** prefixes, int* prefix_lengths, int prefix_count,
-                           char** suffixes, int* suffix_lengths, int suffix_count) {
+                           char** suffixes, int* suffix_lengths, int suffix_count,
+                           char** combined_prefixes, int* combined_prefix_lengths,
+                           char** combined_suffixes, int* combined_suffix_lengths,
+                           int combined_count) {
 	int id = threadIdx.x + (blockIdx.x * blockDim.x);
 
         atomicAdd(exec_count, 1);
@@ -720,11 +834,60 @@ void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* 
 			}
 		}
 
+		// Check combined patterns (prefix AND suffix must BOTH match)
+		char combined_prefix_pattern[64] = {0};
+		char combined_suffix_pattern[64] = {0};
+		for (int i = 0; i < combined_count && !match_found; ++i) {
+			bool prefix_matches = true;
+			bool suffix_matches = true;
+
+			// Check prefix part
+			for (int j = 0; j < combined_prefix_lengths[i]; ++j) {
+				char pattern_char = combined_prefixes[i][j];
+				if (pattern_char != '?' && pattern_char != key[j]) {
+					prefix_matches = false;
+					break;
+				}
+			}
+
+			// Check suffix part
+			int suffix_start = key_len - combined_suffix_lengths[i];
+			if (suffix_start >= 0) {
+				for (int j = 0; j < combined_suffix_lengths[i]; ++j) {
+					char pattern_char = combined_suffixes[i][j];
+					if (pattern_char != '?' && pattern_char != key[suffix_start + j]) {
+						suffix_matches = false;
+						break;
+					}
+				}
+			} else {
+				suffix_matches = false;
+			}
+
+			// BOTH must match for combined pattern
+			if (prefix_matches && suffix_matches) {
+				match_found = true;
+				match_type = "COMBINED";
+				// Copy patterns for printing
+				for (int j = 0; j < combined_prefix_lengths[i] && j < 63; ++j) {
+					combined_prefix_pattern[j] = combined_prefixes[i][j];
+				}
+				for (int j = 0; j < combined_suffix_lengths[i] && j < 63; ++j) {
+					combined_suffix_pattern[j] = combined_suffixes[i][j];
+				}
+			}
+		}
+
 		if (match_found) {
 			atomicAdd(keys_found, 1);
 
 			// Print match information
-			printf("GPU %d %s MATCH [%s] -> %s - ", *gpu, match_type, matched_pattern, key);
+			if (match_type[0] == 'C') { // COMBINED
+				printf("GPU %d %s MATCH [%s...%s] -> %s - ", *gpu, match_type,
+				       combined_prefix_pattern, combined_suffix_pattern, key);
+			} else {
+				printf("GPU %d %s MATCH [%s] -> %s - ", *gpu, match_type, matched_pattern, key);
+			}
 			for(int n=0; n<sizeof(seed); n++) {
 				printf("%02x",(unsigned char)seed[n]);
 			}

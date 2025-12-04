@@ -25,6 +25,16 @@ Create a `vanity-config.json` file in the project root:
     "suffixes": [
       "pump",
       "rich"
+    ],
+    "combined": [
+      {
+        "prefix": "sol",
+        "suffix": "pump"
+      },
+      {
+        "prefix": "moon",
+        "suffix": "rich"
+      }
     ]
   }
 }
@@ -96,6 +106,30 @@ Matches patterns at the **end** of the address:
 - `"pump"` → Finds addresses like: `...XYZpump`
 - `"rich"` → Finds addresses like: `...ABCrich`
 
+### Combined Matching (Prefix AND Suffix)
+
+**NEW!** Match BOTH a prefix AND suffix on the same address:
+
+```json
+{
+  "patterns": {
+    "combined": [
+      {
+        "prefix": "sol",
+        "suffix": "pump"
+      }
+    ]
+  }
+}
+```
+
+This finds addresses like: `solABC123...XYZpump` - starts with "sol" AND ends with "pump" on the **same address**.
+
+**Important**: Combined patterns are MUCH harder to find than individual patterns because BOTH conditions must be met. For example:
+- Finding "sol" prefix: ~200,000 attempts (easy)
+- Finding "pump" suffix: ~11 million attempts (moderate)
+- Finding "sol" prefix AND "pump" suffix together: ~2+ billion attempts (very hard!)
+
 ### Multiple Patterns
 
 You can search for multiple patterns simultaneously:
@@ -166,6 +200,26 @@ Interactive mode:
 4. Press Enter to skip suffixes
 5. Generator starts immediately
 
+### Generate addresses with both prefix AND suffix
+
+For ultra-rare vanity addresses with BOTH requirements:
+```json
+{
+  "max_iterations": 10000000,
+  "stop_after_keys_found": 1,
+  "attempts_per_execution": 20000,
+  "patterns": {
+    "combined": [
+      {
+        "prefix": "sol",
+        "suffix": "win"
+      }
+    ]
+  }
+}
+```
+This will find addresses like `solABC123...win` (starts with "sol" AND ends with "win")
+
 ### Test pattern difficulty
 
 For very difficult patterns, increase iterations:
@@ -183,13 +237,26 @@ For very difficult patterns, increase iterations:
 
 When a match is found, you'll see:
 
+**Prefix match:**
 ```
 GPU 0 PREFIX MATCH [meteor] -> meteorABC123... - 1a2b3c4d...
 [1,162,179,234,45,67,89,123,...]
 ```
 
-- **Match type**: PREFIX or SUFFIX
-- **Pattern matched**: The pattern that was found
+**Suffix match:**
+```
+GPU 0 SUFFIX MATCH [pump] -> XYZ123...pump - 1a2b3c4d...
+[1,162,179,234,45,67,89,123,...]
+```
+
+**Combined match (prefix AND suffix):**
+```
+GPU 0 COMBINED MATCH [sol...pump] -> solABC123...pump - 1a2b3c4d...
+[1,162,179,234,45,67,89,123,...]
+```
+
+- **Match type**: PREFIX, SUFFIX, or COMBINED
+- **Pattern matched**: The pattern(s) that were found
 - **Address**: The full Solana address
 - **Seed hex**: The seed in hexadecimal
 - **Array format**: Solana keyfile format (seed + public key)
