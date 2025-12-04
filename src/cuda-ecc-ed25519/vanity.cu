@@ -556,6 +556,8 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
 
 	                cudaMalloc((void**)&dev_keys_found[g], sizeof(int));
 	                cudaMalloc((void**)&dev_executions_this_gpu[g], sizeof(unsigned long long int));
+	                cudaMemset(dev_keys_found[g], 0, sizeof(int));
+	                cudaMemset(dev_executions_this_gpu[g], 0, sizeof(unsigned long long int));
 
 			vanity_scan<<<minGridSize, blockSize>>>(
 				vanity.states[g],
