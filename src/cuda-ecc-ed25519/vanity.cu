@@ -352,8 +352,9 @@ void vanity_setup(config &vanity) {
 			printf("WARNING: Auto blockSize=%d too small, forcing 256\n", blockSize);
 			blockSize = 256;
 		}
-		// For H100/H200 with sm_90, use much higher occupancy to saturate the GPU
-		int blocksPerSM = (device.major == 9 && device.minor == 0) ? 32 : 8;
+		// For H100/H200 with sm_90, increase occupancy but not too aggressively
+		// The kernel is register-heavy, so we can't push too many blocks per SM
+		int blocksPerSM = (device.major == 9 && device.minor == 0) ? 2 : 8;
 		int minBlocksNeeded = device.multiProcessorCount * blocksPerSM;
 		if (minGridSize < minBlocksNeeded) {
 			printf("WARNING: Auto minGridSize=%d too small, forcing %d\n", minGridSize, minBlocksNeeded);
@@ -546,8 +547,9 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
 			if (blockSize < 256) {
 				blockSize = 256;
 			}
-			// For H100/H200 with sm_90, use much higher occupancy to saturate the GPU
-			int blocksPerSM = (device.major == 9 && device.minor == 0) ? 32 : 8;
+			// For H100/H200 with sm_90, increase occupancy but not too aggressively
+			// The kernel is register-heavy, so we can't push too many blocks per SM
+			int blocksPerSM = (device.major == 9 && device.minor == 0) ? 2 : 8;
 			int minBlocksNeeded = device.multiProcessorCount * blocksPerSM;
 			if (minGridSize < minBlocksNeeded) {
 				minGridSize = minBlocksNeeded;
