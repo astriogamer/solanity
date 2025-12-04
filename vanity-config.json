@@ -1,7 +1,7 @@
 {
   "comment": "Vanity address pattern configuration - supports wildcards with ?",
   "max_iterations": 100000,
-  "stop_after_keys_found": 100,
+  "stop_after_keys_found": 1,
   "attempts_per_execution": 10000,
   "match_mode": "any",
   "patterns": {
