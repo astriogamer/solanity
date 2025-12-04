@@ -511,8 +511,8 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
 
 	unsigned long long int  executions_total = 0;
 	unsigned long long int  executions_this_iteration;
-	int  executions_this_gpu;
-        int* dev_executions_this_gpu[100];
+	unsigned long long int  executions_this_gpu;
+        unsigned long long int* dev_executions_this_gpu[100];
 
         int  keys_found_total = 0;
         int  keys_found_this_iteration;
@@ -555,7 +555,7 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
                 	cudaMemcpy( dev_g, &g, sizeof(int), cudaMemcpyHostToDevice );
 
 	                cudaMalloc((void**)&dev_keys_found[g], sizeof(int));
-	                cudaMalloc((void**)&dev_executions_this_gpu[g], sizeof(int));
+	                cudaMalloc((void**)&dev_executions_this_gpu[g], sizeof(unsigned long long int));
 
 			vanity_scan<<<minGridSize, blockSize>>>(
 				vanity.states[g],
@@ -593,7 +593,7 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
                 	keys_found_total += keys_found_this_iteration; 
 			//printf("GPU %d found %d keys\n",g,keys_found_this_iteration);
 
-                	cudaMemcpy( &executions_this_gpu, dev_executions_this_gpu[g], sizeof(int), cudaMemcpyDeviceToHost );
+                	cudaMemcpy( &executions_this_gpu, dev_executions_this_gpu[g], sizeof(unsigned long long int), cudaMemcpyDeviceToHost );
                 	executions_this_iteration += executions_this_gpu * pconfig.attempts_per_execution;
                 	executions_total += executions_this_gpu * pconfig.attempts_per_execution; 
                         //printf("GPU %d executions: %d\n",g,executions_this_gpu);
@@ -631,7 +631,7 @@ void __global__ vanity_init(unsigned long long int* rseed, curandState* state) {
 	curand_init(*rseed + id, id, 0, &state[id]);
 }
 
-void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* exec_count,
+void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, unsigned long long int* exec_count,
                            char** prefixes, int* prefix_lengths, int prefix_count,
                            char** suffixes, int* suffix_lengths, int suffix_count,
                            char** combined_prefixes, int* combined_prefix_lengths,
