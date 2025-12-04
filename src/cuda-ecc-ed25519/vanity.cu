@@ -231,12 +231,16 @@ void vanity_run(config &vanity) {
 
 		// Print out performance Summary
 		std::chrono::duration<double> elapsed = finish - start;
-		printf("%s Iteration %d Attempts: %llu in %f at %fcps - Total Attempts %llu - keys found %d\n",
+		double cps = executions_this_iteration / elapsed.count();
+		double cps_millions = cps / 1000000.0;
+
+		printf("%s Iteration %d | CPS: %.2fM (%.0f) | Attempts: %llu in %.3fs | Total: %llu | Keys: %d\n",
 			getTimeStr().c_str(),
 			i+1,
-			executions_this_iteration, //(8 * 8 * 256 * 100000),
+			cps_millions,
+			cps,
+			executions_this_iteration,
 			elapsed.count(),
-			executions_this_iteration / elapsed.count(),
 			executions_total,
 			keys_found_total
 		);
