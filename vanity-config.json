@@ -1,0 +1,14 @@
+{
+  "comment": "Vanity address pattern configuration - supports wildcards with ?",
+  "max_iterations": 100000,
+  "stop_after_keys_found": 100,
+  "attempts_per_execution": 10000,
+  "patterns": {
+    "prefixes": [
+      "abc"
+    ],
+    "suffixes": [
+      "ab"
+    ]
+  }
+}

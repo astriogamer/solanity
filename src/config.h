@@ -1,20 +1,24 @@
 #ifndef VANITY_CONFIG
 #define VANITY_CONFIG
 
+// Default configuration values (used if vanity-config.json is not found)
 static int const MAX_ITERATIONS = 100000;
 static int const STOP_AFTER_KEYS_FOUND = 100;
 
 // how many times a gpu thread generates a public key in one go
 // Optimized for ~30 second iterations
-__device__ const int ATTEMPTS_PER_EXECUTION = 10000;
+static int const ATTEMPTS_PER_EXECUTION = 10000;
 
 __device__ const int MAX_PATTERNS = 10;
 
-// exact matches at the beginning of the address, letter ? is wildcard
-
+// Default prefixes (exact matches at the beginning of the address)
+// Letter '?' is wildcard - used only if vanity-config.json is not found
 __device__ static char const *prefixes[] = {
 	"meteor",
 };
 
+// Note: To customize patterns without rebuilding:
+// 1. Create vanity-config.json in the project root
+// 2. Or use interactive input when prompted at runtime
 
 #endif

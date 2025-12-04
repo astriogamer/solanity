@@ -3,7 +3,11 @@
 #include <chrono>
 
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include <ctime>
+#include <string>
+#include <cstring>
 
 #include <assert.h>
 #include <inttypes.h>
@@ -30,12 +34,24 @@ typedef struct {
 	curandState*    states[8];
 } config;
 
+typedef struct {
+	std::vector<std::string> prefixes;
+	std::vector<std::string> suffixes;
+	int max_iterations;
+	int stop_after_keys_found;
+	int attempts_per_execution;
+} pattern_config;
+
 /* -- Prototypes, Because C++ ----------------------------------------------- */
 
+pattern_config  load_pattern_config();
+void            interactive_pattern_input(pattern_config& pconfig);
 void            vanity_setup(config& vanity);
-void            vanity_run(config& vanity);
+void            vanity_run(config& vanity, pattern_config& pconfig);
 void __global__ vanity_init(unsigned long long int* seed, curandState* state);
-void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* execution_count);
+void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* execution_count,
+                           char** prefixes, int* prefix_lengths, int prefix_count,
+                           char** suffixes, int* suffix_lengths, int suffix_count);
 bool __device__ b58enc(char* b58, size_t* b58sz, uint8_t* data, size_t binsz);
 
 /* -- Entry Point ----------------------------------------------------------- */
@@ -43,9 +59,29 @@ bool __device__ b58enc(char* b58, size_t* b58sz, uint8_t* data, size_t binsz);
 int main(int argc, char const* argv[]) {
 	ed25519_set_verbose(true);
 
+	// Load pattern configuration
+	pattern_config pconfig = load_pattern_config();
+
+	// Allow interactive override if requested
+	std::cout << "\nCurrent configuration:\n";
+	std::cout << "  Max iterations: " << pconfig.max_iterations << "\n";
+	std::cout << "  Stop after keys found: " << pconfig.stop_after_keys_found << "\n";
+	std::cout << "  Attempts per execution: " << pconfig.attempts_per_execution << "\n";
+	std::cout << "  Prefixes: ";
+	for (const auto& p : pconfig.prefixes) std::cout << p << " ";
+	std::cout << "\n  Suffixes: ";
+	for (const auto& s : pconfig.suffixes) std::cout << s << " ";
+	std::cout << "\n\nModify patterns? (y/n): ";
+
+	char response;
+	std::cin >> response;
+	if (response == 'y' || response == 'Y') {
+		interactive_pattern_input(pconfig);
+	}
+
 	config vanity;
 	vanity_setup(vanity);
-	vanity_run(vanity);
+	vanity_run(vanity, pconfig);
 }
 
 // SMITH
@@ -70,6 +106,160 @@ unsigned long long int makeSeed() {
     }
 
     return seed;
+}
+
+// Simple JSON parser for pattern config
+pattern_config load_pattern_config() {
+	pattern_config pconfig;
+
+	// Default values from config.h
+	pconfig.max_iterations = MAX_ITERATIONS;
+	pconfig.stop_after_keys_found = STOP_AFTER_KEYS_FOUND;
+	pconfig.attempts_per_execution = ATTEMPTS_PER_EXECUTION;
+
+	// Try to load from JSON file
+	std::ifstream config_file("vanity-config.json");
+	if (!config_file.is_open()) {
+		std::cout << "No vanity-config.json found, using defaults from config.h\n";
+		// Load defaults from config.h
+		for (unsigned int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+			pconfig.prefixes.push_back(std::string(prefixes[i]));
+		}
+		return pconfig;
+	}
+
+	std::cout << "Loading configuration from vanity-config.json\n";
+	std::stringstream buffer;
+	buffer << config_file.rdbuf();
+	std::string content = buffer.str();
+
+	// Simple JSON parsing (basic implementation)
+	size_t pos = 0;
+
+	// Parse max_iterations
+	pos = content.find("\"max_iterations\"");
+	if (pos != std::string::npos) {
+		pos = content.find(":", pos);
+		if (pos != std::string::npos) {
+			pconfig.max_iterations = std::stoi(content.substr(pos + 1));
+		}
+	}
+
+	// Parse stop_after_keys_found
+	pos = content.find("\"stop_after_keys_found\"");
+	if (pos != std::string::npos) {
+		pos = content.find(":", pos);
+		if (pos != std::string::npos) {
+			pconfig.stop_after_keys_found = std::stoi(content.substr(pos + 1));
+		}
+	}
+
+	// Parse attempts_per_execution
+	pos = content.find("\"attempts_per_execution\"");
+	if (pos != std::string::npos) {
+		pos = content.find(":", pos);
+		if (pos != std::string::npos) {
+			pconfig.attempts_per_execution = std::stoi(content.substr(pos + 1));
+		}
+	}
+
+	// Parse prefixes array
+	pos = content.find("\"prefixes\"");
+	if (pos != std::string::npos) {
+		size_t bracket_start = content.find("[", pos);
+		size_t bracket_end = content.find("]", bracket_start);
+		if (bracket_start != std::string::npos && bracket_end != std::string::npos) {
+			std::string array_content = content.substr(bracket_start + 1, bracket_end - bracket_start - 1);
+			size_t quote_pos = 0;
+			while ((quote_pos = array_content.find("\"", quote_pos)) != std::string::npos) {
+				size_t end_quote = array_content.find("\"", quote_pos + 1);
+				if (end_quote != std::string::npos) {
+					std::string pattern = array_content.substr(quote_pos + 1, end_quote - quote_pos - 1);
+					if (!pattern.empty()) {
+						pconfig.prefixes.push_back(pattern);
+					}
+					quote_pos = end_quote + 1;
+				} else {
+					break;
+				}
+			}
+		}
+	}
+
+	// Parse suffixes array
+	pos = content.find("\"suffixes\"");
+	if (pos != std::string::npos) {
+		size_t bracket_start = content.find("[", pos);
+		size_t bracket_end = content.find("]", bracket_start);
+		if (bracket_start != std::string::npos && bracket_end != std::string::npos) {
+			std::string array_content = content.substr(bracket_start + 1, bracket_end - bracket_start - 1);
+			size_t quote_pos = 0;
+			while ((quote_pos = array_content.find("\"", quote_pos)) != std::string::npos) {
+				size_t end_quote = array_content.find("\"", quote_pos + 1);
+				if (end_quote != std::string::npos) {
+					std::string pattern = array_content.substr(quote_pos + 1, end_quote - quote_pos - 1);
+					if (!pattern.empty()) {
+						pconfig.suffixes.push_back(pattern);
+					}
+					quote_pos = end_quote + 1;
+				} else {
+					break;
+				}
+			}
+		}
+	}
+
+	return pconfig;
+}
+
+void interactive_pattern_input(pattern_config& pconfig) {
+	std::string input;
+	std::cin.ignore(); // Clear newline from previous input
+
+	std::cout << "\nEnter prefixes (comma-separated, or empty to skip): ";
+	std::getline(std::cin, input);
+	if (!input.empty()) {
+		pconfig.prefixes.clear();
+		std::stringstream ss(input);
+		std::string pattern;
+		while (std::getline(ss, pattern, ',')) {
+			// Trim whitespace
+			size_t start = pattern.find_first_not_of(" \t");
+			size_t end = pattern.find_last_not_of(" \t");
+			if (start != std::string::npos && end != std::string::npos) {
+				pattern = pattern.substr(start, end - start + 1);
+				if (!pattern.empty()) {
+					pconfig.prefixes.push_back(pattern);
+				}
+			}
+		}
+	}
+
+	std::cout << "Enter suffixes (comma-separated, or empty to skip): ";
+	std::getline(std::cin, input);
+	if (!input.empty()) {
+		pconfig.suffixes.clear();
+		std::stringstream ss(input);
+		std::string pattern;
+		while (std::getline(ss, pattern, ',')) {
+			// Trim whitespace
+			size_t start = pattern.find_first_not_of(" \t");
+			size_t end = pattern.find_last_not_of(" \t");
+			if (start != std::string::npos && end != std::string::npos) {
+				pattern = pattern.substr(start, end - start + 1);
+				if (!pattern.empty()) {
+					pconfig.suffixes.push_back(pattern);
+				}
+			}
+		}
+	}
+
+	std::cout << "\nUpdated configuration:\n";
+	std::cout << "  Prefixes: ";
+	for (const auto& p : pconfig.prefixes) std::cout << p << " ";
+	std::cout << "\n  Suffixes: ";
+	for (const auto& s : pconfig.suffixes) std::cout << s << " ";
+	std::cout << "\n";
 }
 
 /* -- Vanity Step Functions ------------------------------------------------- */
@@ -157,21 +347,74 @@ void vanity_setup(config &vanity) {
 	printf("END: Initializing Memory\n");
 }
 
-void vanity_run(config &vanity) {
+void vanity_run(config &vanity, pattern_config& pconfig) {
 	int gpuCount = 0;
 	cudaGetDeviceCount(&gpuCount);
 
-	unsigned long long int  executions_total = 0; 
-	unsigned long long int  executions_this_iteration; 
-	int  executions_this_gpu; 
+	// Prepare patterns for GPU
+	char** dev_prefixes[100];
+	int* dev_prefix_lengths[100];
+	char** dev_suffixes[100];
+	int* dev_suffix_lengths[100];
+
+	std::vector<int> prefix_lengths;
+	std::vector<int> suffix_lengths;
+	for (const auto& p : pconfig.prefixes) prefix_lengths.push_back(p.length());
+	for (const auto& s : pconfig.suffixes) suffix_lengths.push_back(s.length());
+
+	// Copy patterns to device for each GPU
+	for (int g = 0; g < gpuCount; ++g) {
+		cudaSetDevice(g);
+
+		// Allocate prefix arrays
+		if (!pconfig.prefixes.empty()) {
+			char** h_prefixes = new char*[pconfig.prefixes.size()];
+			for (size_t i = 0; i < pconfig.prefixes.size(); ++i) {
+				cudaMalloc(&h_prefixes[i], pconfig.prefixes[i].length() + 1);
+				cudaMemcpy(h_prefixes[i], pconfig.prefixes[i].c_str(),
+				          pconfig.prefixes[i].length() + 1, cudaMemcpyHostToDevice);
+			}
+			cudaMalloc(&dev_prefixes[g], pconfig.prefixes.size() * sizeof(char*));
+			cudaMemcpy(dev_prefixes[g], h_prefixes,
+			          pconfig.prefixes.size() * sizeof(char*), cudaMemcpyHostToDevice);
+			delete[] h_prefixes;
+
+			cudaMalloc(&dev_prefix_lengths[g], prefix_lengths.size() * sizeof(int));
+			cudaMemcpy(dev_prefix_lengths[g], prefix_lengths.data(),
+			          prefix_lengths.size() * sizeof(int), cudaMemcpyHostToDevice);
+		}
+
+		// Allocate suffix arrays
+		if (!pconfig.suffixes.empty()) {
+			char** h_suffixes = new char*[pconfig.suffixes.size()];
+			for (size_t i = 0; i < pconfig.suffixes.size(); ++i) {
+				cudaMalloc(&h_suffixes[i], pconfig.suffixes[i].length() + 1);
+				cudaMemcpy(h_suffixes[i], pconfig.suffixes[i].c_str(),
+				          pconfig.suffixes[i].length() + 1, cudaMemcpyHostToDevice);
+			}
+			cudaMalloc(&dev_suffixes[g], pconfig.suffixes.size() * sizeof(char*));
+			cudaMemcpy(dev_suffixes[g], h_suffixes,
+			          pconfig.suffixes.size() * sizeof(char*), cudaMemcpyHostToDevice);
+			delete[] h_suffixes;
+
+			cudaMalloc(&dev_suffix_lengths[g], suffix_lengths.size() * sizeof(int));
+			cudaMemcpy(dev_suffix_lengths[g], suffix_lengths.data(),
+			          suffix_lengths.size() * sizeof(int), cudaMemcpyHostToDevice);
+		}
+	}
+
+	unsigned long long int  executions_total = 0;
+	unsigned long long int  executions_this_iteration;
+	int  executions_this_gpu;
         int* dev_executions_this_gpu[100];
 
         int  keys_found_total = 0;
         int  keys_found_this_iteration;
         int* dev_keys_found[100]; // not more than 100 GPUs ok!
 
-	printf("Starting iteration loop...\n");
-	for (int i = 0; i < MAX_ITERATIONS; ++i) {
+	printf("Starting iteration loop with %zu prefixes and %zu suffixes...\n",
+	       pconfig.prefixes.size(), pconfig.suffixes.size());
+	for (int i = 0; i < pconfig.max_iterations; ++i) {
 		printf("Iteration %d starting...\n", i+1);
 		auto start  = std::chrono::high_resolution_clock::now();
 
@@ -208,7 +451,18 @@ void vanity_run(config &vanity) {
 	                cudaMalloc((void**)&dev_keys_found[g], sizeof(int));
 	                cudaMalloc((void**)&dev_executions_this_gpu[g], sizeof(int));
 
-			vanity_scan<<<minGridSize, blockSize>>>(vanity.states[g], dev_keys_found[g], dev_g, dev_executions_this_gpu[g]);
+			vanity_scan<<<minGridSize, blockSize>>>(
+				vanity.states[g],
+				dev_keys_found[g],
+				dev_g,
+				dev_executions_this_gpu[g],
+				pconfig.prefixes.empty() ? nullptr : dev_prefixes[g],
+				pconfig.prefixes.empty() ? nullptr : dev_prefix_lengths[g],
+				pconfig.prefixes.size(),
+				pconfig.suffixes.empty() ? nullptr : dev_suffixes[g],
+				pconfig.suffixes.empty() ? nullptr : dev_suffix_lengths[g],
+				pconfig.suffixes.size()
+			);
 			printf("Kernel launched for GPU %d, now waiting for sync...\n", g);
 
 		}
@@ -228,9 +482,9 @@ void vanity_run(config &vanity) {
                 	keys_found_total += keys_found_this_iteration; 
 			//printf("GPU %d found %d keys\n",g,keys_found_this_iteration);
 
-                	cudaMemcpy( &executions_this_gpu, dev_executions_this_gpu[g], sizeof(int), cudaMemcpyDeviceToHost ); 
-                	executions_this_iteration += executions_this_gpu * ATTEMPTS_PER_EXECUTION; 
-                	executions_total += executions_this_gpu * ATTEMPTS_PER_EXECUTION; 
+                	cudaMemcpy( &executions_this_gpu, dev_executions_this_gpu[g], sizeof(int), cudaMemcpyDeviceToHost );
+                	executions_this_iteration += executions_this_gpu * pconfig.attempts_per_execution;
+                	executions_total += executions_this_gpu * pconfig.attempts_per_execution; 
                         //printf("GPU %d executions: %d\n",g,executions_this_gpu);
 		}
 
@@ -250,10 +504,10 @@ void vanity_run(config &vanity) {
 			keys_found_total
 		);
 
-                if ( keys_found_total >= STOP_AFTER_KEYS_FOUND ) {
+                if ( keys_found_total >= pconfig.stop_after_keys_found ) {
                 	printf("Enough keys found, Done! \n");
-		        exit(0);	
-		}	
+		        exit(0);
+		}
 	}
 
 	printf("Iterations complete, Done!\n");
@@ -266,22 +520,12 @@ void __global__ vanity_init(unsigned long long int* rseed, curandState* state) {
 	curand_init(*rseed + id, id, 0, &state[id]);
 }
 
-void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* exec_count) {
+void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* exec_count,
+                           char** prefixes, int* prefix_lengths, int prefix_count,
+                           char** suffixes, int* suffix_lengths, int suffix_count) {
 	int id = threadIdx.x + (blockIdx.x * blockDim.x);
 
         atomicAdd(exec_count, 1);
-
-	// SMITH - should really be passed in, but hey ho
-    	int prefix_letter_counts[MAX_PATTERNS];
-    	for (unsigned int n = 0; n < sizeof(prefixes) / sizeof(prefixes[0]); ++n) {
-        	if ( MAX_PATTERNS == n ) {
-            		printf("NEVER SPEAK TO ME OR MY SON AGAIN");
-            		return;
-        	}
-        	int letter_count = 0;
-        	for(; prefixes[n][letter_count]!=0; letter_count++);
-        	prefix_letter_counts[n] = letter_count;
-    	}
 
 	// Local Kernel State
 	ge_p3 A;
@@ -430,71 +674,75 @@ void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* 
 
 		// Code Until here runs at 22_000_000H/s. b58enc badly needs optimization.
 
-		// We don't have access to strncmp/strlen here, I don't know
-		// what the efficient way of doing this on a GPU is, so I'll
-		// start with a dumb loop. There seem to be implementations out
-		// there of bignunm division done in parallel as a CUDA kernel
-		// so it might make sense to write a new parallel kernel to do
-		// this.
+		// Pattern matching - check both prefixes and suffixes
+		bool match_found = false;
+		char* matched_pattern = nullptr;
+		const char* match_type = nullptr;
 
-                for (int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+		// Get key length
+		int key_len = 0;
+		for (; key[key_len] != '\0' && key_len < 256; ++key_len);
 
-                        for (int j = 0; j<prefix_letter_counts[i]; ++j) {
-
-				// it doesn't match this prefix, no need to continue
-				if ( !(prefixes[i][j] == '?') && !(prefixes[i][j] == key[j]) ) {
+		// Check prefixes
+		for (int i = 0; i < prefix_count && !match_found; ++i) {
+			bool prefix_matches = true;
+			for (int j = 0; j < prefix_lengths[i]; ++j) {
+				char pattern_char = prefixes[i][j];
+				if (pattern_char != '?' && pattern_char != key[j]) {
+					prefix_matches = false;
 					break;
 				}
+			}
+			if (prefix_matches) {
+				match_found = true;
+				matched_pattern = prefixes[i];
+				match_type = "PREFIX";
+			}
+		}
 
-                                // we got to the end of the prefix pattern, it matched!
-                                if ( j == ( prefix_letter_counts[i] - 1) ) {
-                                        atomicAdd(keys_found, 1);
-                                        //size_t pkeysize = 256;
-                                        //b58enc(pkey, &pkeysize, seed, 32);
-                                       
-				        // SMITH	
-					// The 'key' variable is the public key in base58 'address' format
-                                        // We display the seed in hex
-
-					// Solana stores the keyfile as seed (first 32 bytes)
-					// followed by public key (last 32 bytes)
-					// as an array of decimal numbers in json format
-
-                                        printf("GPU %d MATCH %s - ", *gpu, key);
-                                        for(int n=0; n<sizeof(seed); n++) { 
-						printf("%02x",(unsigned char)seed[n]); 
+		// Check suffixes
+		for (int i = 0; i < suffix_count && !match_found; ++i) {
+			bool suffix_matches = true;
+			int suffix_start = key_len - suffix_lengths[i];
+			if (suffix_start >= 0) {
+				for (int j = 0; j < suffix_lengths[i]; ++j) {
+					char pattern_char = suffixes[i][j];
+					if (pattern_char != '?' && pattern_char != key[suffix_start + j]) {
+						suffix_matches = false;
+						break;
 					}
-					printf("\n");
-					
-                                        printf("[");
-					for(int n=0; n<sizeof(seed); n++) { 
-						printf("%d,",(unsigned char)seed[n]); 
-					}
-                                        for(int n=0; n<sizeof(publick); n++) {
-					        if ( n+1==sizeof(publick) ) {	
-							printf("%d",publick[n]);
-						} else {
-							printf("%d,",publick[n]);
-						}
-					}
-                                        printf("]\n");
-
-					/*
-					printf("Public: ");
-                                        for(int n=0; n<sizeof(publick); n++) { printf("%d ",publick[n]); }
-					printf("\n");
-					printf("Private: ");
-                                        for(int n=0; n<sizeof(privatek); n++) { printf("%d ",privatek[n]); }
-					printf("\n");
-					printf("Seed: ");
-                                        for(int n=0; n<sizeof(seed); n++) { printf("%d ",seed[n]); }
-					printf("\n");
-                                        */
-
-                                        break;
 				}
+				if (suffix_matches) {
+					match_found = true;
+					matched_pattern = suffixes[i];
+					match_type = "SUFFIX";
+				}
+			}
+		}
 
-                        }
+		if (match_found) {
+			atomicAdd(keys_found, 1);
+
+			// Print match information
+			printf("GPU %d %s MATCH [%s] -> %s - ", *gpu, match_type, matched_pattern, key);
+			for(int n=0; n<sizeof(seed); n++) {
+				printf("%02x",(unsigned char)seed[n]);
+			}
+			printf("\n");
+
+			// Print as Solana keyfile format (seed + public key as decimal array)
+			printf("[");
+			for(int n=0; n<sizeof(seed); n++) {
+				printf("%d,",(unsigned char)seed[n]);
+			}
+			for(int n=0; n<sizeof(publick); n++) {
+				if ( n+1==sizeof(publick) ) {
+					printf("%d",publick[n]);
+				} else {
+					printf("%d,",publick[n]);
+				}
+			}
+			printf("]\n");
 		}
 
 		// Code Until here runs at 22_000_000H/s. So the above is fast enough.
