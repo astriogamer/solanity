@@ -6,22 +6,13 @@
   "match_mode": "any",
   "patterns": {
     "prefixes": [
-      "meteor",
-      "sol",
-      "moon"
     ],
     "suffixes": [
-      "pump",
-      "rich"
     ],
     "combined": [
       {
-        "prefix": "sol",
-        "suffix": "pump"
-      },
-      {
-        "prefix": "moon",
-        "suffix": "rich"
+        "prefix": "97Q",
+        "suffix": "hegR"
       }
     ]
   }
