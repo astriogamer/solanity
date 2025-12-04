@@ -120,11 +120,11 @@ pattern_config load_pattern_config() {
 	// Try to load from JSON file
 	std::ifstream config_file("vanity-config.json");
 	if (!config_file.is_open()) {
-		std::cout << "No vanity-config.json found, using defaults from config.h\n";
-		// Load defaults from config.h
-		for (unsigned int i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
-			pconfig.prefixes.push_back(std::string(prefixes[i]));
-		}
+		std::cout << "No vanity-config.json found, using built-in defaults\n";
+		// Use built-in default instead of config.h to avoid linking issues
+		pconfig.prefixes.push_back("meteor");
+		std::cout << "Default prefix: meteor\n";
+		std::cout << "To customize: create vanity-config.json or use interactive input\n";
 		return pconfig;
 	}
 
