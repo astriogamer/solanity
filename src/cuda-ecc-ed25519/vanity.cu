@@ -170,7 +170,9 @@ void vanity_run(config &vanity) {
         int  keys_found_this_iteration;
         int* dev_keys_found[100]; // not more than 100 GPUs ok!
 
+	printf("Starting iteration loop...\n");
 	for (int i = 0; i < MAX_ITERATIONS; ++i) {
+		printf("Iteration %d starting...\n", i+1);
 		auto start  = std::chrono::high_resolution_clock::now();
 
                 executions_this_iteration=0;
@@ -207,8 +209,10 @@ void vanity_run(config &vanity) {
 	                cudaMalloc((void**)&dev_executions_this_gpu[g], sizeof(int));
 
 			vanity_scan<<<minGridSize, blockSize>>>(vanity.states[g], dev_keys_found[g], dev_g, dev_executions_this_gpu[g]);
+			printf("Kernel launched for GPU %d, now waiting for sync...\n", g);
 
 		}
+		printf("All kernels launched, synchronizing...\n");
 
 		// Synchronize while we wait for kernels to complete. I do not
 		// actually know if this will sync against all GPUs, it might
@@ -216,6 +220,7 @@ void vanity_run(config &vanity) {
 		// roughly at the same time and worst case it will just stack
 		// up kernels in the queue to run.
 		cudaDeviceSynchronize();
+		printf("Sync complete!\n");
 		auto finish = std::chrono::high_resolution_clock::now();
 
 		for (int g = 0; g < gpuCount; ++g) {
