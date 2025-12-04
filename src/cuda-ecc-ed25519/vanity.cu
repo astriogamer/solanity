@@ -352,8 +352,9 @@ void vanity_setup(config &vanity) {
 			printf("WARNING: Auto blockSize=%d too small, forcing 256\n", blockSize);
 			blockSize = 256;
 		}
-		// Ensure we use enough blocks (at least 8 blocks per SM)
-		int minBlocksNeeded = device.multiProcessorCount * 8;
+		// For H100/H200 with sm_90, use much higher occupancy to saturate the GPU
+		int blocksPerSM = (device.major == 9 && device.minor == 0) ? 32 : 8;
+		int minBlocksNeeded = device.multiProcessorCount * blocksPerSM;
 		if (minGridSize < minBlocksNeeded) {
 			printf("WARNING: Auto minGridSize=%d too small, forcing %d\n", minGridSize, minBlocksNeeded);
 			minGridSize = minBlocksNeeded;
@@ -545,7 +546,9 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
 			if (blockSize < 256) {
 				blockSize = 256;
 			}
-			int minBlocksNeeded = device.multiProcessorCount * 8;
+			// For H100/H200 with sm_90, use much higher occupancy to saturate the GPU
+			int blocksPerSM = (device.major == 9 && device.minor == 0) ? 32 : 8;
+			int minBlocksNeeded = device.multiProcessorCount * blocksPerSM;
 			if (minGridSize < minBlocksNeeded) {
 				minGridSize = minBlocksNeeded;
 			}
@@ -572,7 +575,8 @@ void vanity_run(config &vanity, pattern_config& pconfig) {
 				pconfig.combined.empty() ? nullptr : dev_combined_prefix_lengths[g],
 				pconfig.combined.empty() ? nullptr : dev_combined_suffixes[g],
 				pconfig.combined.empty() ? nullptr : dev_combined_suffix_lengths[g],
-				pconfig.combined.size()
+				pconfig.combined.size(),
+				pconfig.attempts_per_execution
 			);
 			printf("Kernel launched for GPU %d, now waiting for sync...\n", g);
 
@@ -636,10 +640,10 @@ void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* 
                            char** suffixes, int* suffix_lengths, int suffix_count,
                            char** combined_prefixes, int* combined_prefix_lengths,
                            char** combined_suffixes, int* combined_suffix_lengths,
-                           int combined_count) {
+                           int combined_count, int attempts_per_exec) {
 	int id = threadIdx.x + (blockIdx.x * blockDim.x);
 
-        atomicAdd(exec_count, 1);
+        atomicAdd(exec_count, attempts_per_exec);
 
 	// Local Kernel State
 	ge_p3 A;
@@ -672,7 +676,7 @@ void __global__ vanity_scan(curandState* state, int* keys_found, int* gpu, int* 
 	// and another that is warp efficient for bignum division to more
 	// efficiently scan for prefixes. Right now bs58enc cuts performance
 	// from 16M keys on my machine per second to 4M.
-	for (int attempts = 0; attempts < ATTEMPTS_PER_EXECUTION; ++attempts) {
+	for (int attempts = 0; attempts < attempts_per_exec; ++attempts) {
 		// sha512_init Inlined
 		md.curlen   = 0;
 		md.length   = 0;
