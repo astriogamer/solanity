@@ -95,6 +95,19 @@ void vanity_setup(config &vanity) {
 		cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);
 		cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0);
 
+		// PERFORMANCE FIX: Force higher occupancy for newer GPUs
+		// The automatic occupancy calculation can be too conservative
+		if (blockSize < 256) {
+			printf("WARNING: Auto blockSize=%d too small, forcing 256\n", blockSize);
+			blockSize = 256;
+		}
+		// Ensure we use enough blocks (at least 8 blocks per SM)
+		int minBlocksNeeded = device.multiProcessorCount * 8;
+		if (minGridSize < minBlocksNeeded) {
+			printf("WARNING: Auto minGridSize=%d too small, forcing %d\n", minGridSize, minBlocksNeeded);
+			minGridSize = minBlocksNeeded;
+		}
+
 		// Output Device Details
 		// 
 		// Our kernels currently don't take advantage of data locality
@@ -134,8 +147,11 @@ void vanity_setup(config &vanity) {
 	        cudaMalloc((void**)&dev_rseed, sizeof(unsigned long long int));		
                 cudaMemcpy( dev_rseed, &rseed, sizeof(unsigned long long int), cudaMemcpyHostToDevice ); 
 
-		cudaMalloc((void **)&(vanity.states[i]), maxActiveBlocks * blockSize * sizeof(curandState));
-		vanity_init<<<maxActiveBlocks, blockSize>>>(dev_rseed, vanity.states[i]);
+		cudaMalloc((void **)&(vanity.states[i]), minGridSize * blockSize * sizeof(curandState));
+		vanity_init<<<minGridSize, blockSize>>>(dev_rseed, vanity.states[i]);
+
+		printf("GPU %d: Launching with %d blocks x %d threads = %d total threads\n",
+		       i, minGridSize, blockSize, minGridSize * blockSize);
 	}
 
 	printf("END: Initializing Memory\n");
@@ -162,6 +178,11 @@ void vanity_run(config &vanity) {
 		// Run on all GPUs
 		for (int g = 0; g < gpuCount; ++g) {
 			cudaSetDevice(g);
+
+			// Fetch Device Properties
+			cudaDeviceProp device;
+			cudaGetDeviceProperties(&device, g);
+
 			// Calculate Occupancy
 			int blockSize       = 0,
 			    minGridSize     = 0,
@@ -169,14 +190,23 @@ void vanity_run(config &vanity) {
 			cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize, vanity_scan, 0, 0);
 			cudaOccupancyMaxActiveBlocksPerMultiprocessor(&maxActiveBlocks, vanity_scan, blockSize, 0);
 
+			// PERFORMANCE FIX: Force higher occupancy
+			if (blockSize < 256) {
+				blockSize = 256;
+			}
+			int minBlocksNeeded = device.multiProcessorCount * 8;
+			if (minGridSize < minBlocksNeeded) {
+				minGridSize = minBlocksNeeded;
+			}
+
 			int* dev_g;
 	                cudaMalloc((void**)&dev_g, sizeof(int));
-                	cudaMemcpy( dev_g, &g, sizeof(int), cudaMemcpyHostToDevice ); 
+                	cudaMemcpy( dev_g, &g, sizeof(int), cudaMemcpyHostToDevice );
 
-	                cudaMalloc((void**)&dev_keys_found[g], sizeof(int));		
-	                cudaMalloc((void**)&dev_executions_this_gpu[g], sizeof(int));		
+	                cudaMalloc((void**)&dev_keys_found[g], sizeof(int));
+	                cudaMalloc((void**)&dev_executions_this_gpu[g], sizeof(int));
 
-			vanity_scan<<<maxActiveBlocks, blockSize>>>(vanity.states[g], dev_keys_found[g], dev_g, dev_executions_this_gpu[g]);
+			vanity_scan<<<minGridSize, blockSize>>>(vanity.states[g], dev_keys_found[g], dev_g, dev_executions_this_gpu[g]);
 
 		}
 
